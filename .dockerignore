@@ -1,0 +1,59 @@
+# ===========================================================================
+# AgileIQ — .dockerignore
+# Ce qui ne doit JAMAIS entrer dans le contexte de build Docker.
+# Objectif : build plus rapide, image plus légère, pas de secrets embarqués.
+# ===========================================================================
+
+# Contrôle de version
+.git/
+.gitignore
+.gitattributes
+
+# Environnements virtuels & caches Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Secrets & environnement local
+.env
+.env.*
+!.env.example
+
+# Tests & couverture
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker (on n'embarque pas les fichiers d'orchestration dans l'image)
+docker-compose.override.yml
+docker-compose.prod.yml
+docker/data/
+
+# Documentation & fichiers de cadrage
+*.md
+!README.md
+docs/
+
+# Artefacts ML & datasets (vivront dans MinIO / volumes)
+ml_models/*.pkl
+ml_models/*.joblib
+data/
+
+# Logs & divers
+logs/
+*.log
+.DS_Store
+
+# Frontend (build séparé)
+node_modules/
+frontend/
