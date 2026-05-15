@@ -1,0 +1,16 @@
+# ===========================================================================
+# AgileIQ — requirements/prod.txt
+# Dépendances de PRODUCTION : base.txt + ce qui est spécifique au runtime
+# de production (serveur d'application, monitoring système).
+# C'est ce fichier qu'utilise l'image Docker de production.
+#
+# Installation : pip install -r requirements/prod.txt
+# ===========================================================================
+
+-r base.txt
+
+# --- Serveur d'application WSGI -------------------------------------------
+gunicorn==23.0.0                # serveur WSGI de production (remplace le dev server Flask)
+
+# --- Monitoring système ---------------------------------------------------
+sentry-sdk[flask]==2.19.2       # suivi des erreurs en production (self-hostable)

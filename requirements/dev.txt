@@ -1,0 +1,31 @@
+# ===========================================================================
+# AgileIQ — requirements/dev.txt
+# Dépendances de DÉVELOPPEMENT : tests, qualité de code, outillage.
+# Ne JAMAIS installer dans l'image Docker de production.
+#
+# Installation : pip install -r requirements/dev.txt
+# (le -r ci-dessous inclut automatiquement base.txt)
+# ===========================================================================
+
+-r base.txt
+
+# --- Tests ----------------------------------------------------------------
+pytest==8.3.4                   # framework de tests
+pytest-cov==6.0.0               # mesure de couverture
+pytest-flask==1.3.0             # fixtures Flask (client de test, app context)
+pytest-mock==3.14.0             # mocks simplifiés
+factory-boy==3.3.1              # génération de données de test (factories)
+faker==33.1.0                   # données fictives réalistes (seed, tests)
+
+# --- Qualité de code ------------------------------------------------------
+ruff==0.8.4                     # linter
+black==24.10.0                  # formateur
+mypy==1.13.0                    # vérification de types
+bandit[toml]==1.8.0             # analyse de sécurité statique
+
+# --- Hooks & outillage ----------------------------------------------------
+pre-commit==4.0.1               # exécution des hooks au commit
+
+# --- Stubs de types (pour mypy) -------------------------------------------
+types-redis==4.6.0.20241004
+types-requests==2.32.0.20241016

@@ -1,0 +1,152 @@
+# ===========================================================================
+# AgileIQ — pyproject.toml
+#
+# Ce fichier centralise :
+#   1. les métadonnées du projet (nom, version, Python requis)
+#   2. la configuration de TOUS les outils de qualité (ruff, black, mypy,
+#      pytest, bandit, coverage)
+#
+# Les DÉPENDANCES réelles sont dans requirements/ (base.txt, dev.txt, prod.txt)
+# pour pouvoir installer des sous-ensembles différents selon l'environnement
+# (ex. l'image Docker de prod n'embarque pas pytest).
+# ===========================================================================
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ---------------------------------------------------------------------------
+# Métadonnées du projet
+# ---------------------------------------------------------------------------
+[project]
+name = "agileiq"
+version = "0.1.0"
+description = "Plateforme d'aide à la décision Agile augmentée par l'IA"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "AgileIQ Team" }]
+keywords = ["agile", "ai", "nlp", "project-management", "flask"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ===========================================================================
+# RUFF — linter (remplace flake8, isort, pyupgrade, pydocstyle...)
+# Doc : https://docs.astral.sh/ruff/
+# ===========================================================================
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["app", "tests", "ml_service"]
+extend-exclude = ["migrations", ".venv", "build", "dist"]
+
+[tool.ruff.lint]
+# Familles de règles activées
+select = [
+    "E",    # pycodestyle (erreurs)
+    "W",    # pycodestyle (warnings)
+    "F",    # pyflakes
+    "I",    # isort (tri des imports)
+    "N",    # pep8-naming (conventions de nommage)
+    "UP",   # pyupgrade (syntaxe Python moderne)
+    "B",    # flake8-bugbear (pièges courants)
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "RUF",  # règles spécifiques à ruff
+    "ARG",  # arguments inutilisés
+    "PTH",  # préfère pathlib aux os.path
+]
+ignore = [
+    "E501",  # longueur de ligne gérée par black
+    "B008",  # appel de fonction dans un argument par défaut (courant avec Flask/DI)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Les tests peuvent avoir des imports "inutilisés" (fixtures) et des asserts
+"tests/*" = ["ARG", "S101"]
+"__init__.py" = ["F401"]  # ré-exports volontaires
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "ml_service"]
+
+# ===========================================================================
+# BLACK — formateur de code
+# ===========================================================================
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+extend-exclude = '''
+/(
+    migrations
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+# ===========================================================================
+# MYPY — vérification statique des types
+# ===========================================================================
+[tool.mypy]
+python_version = "3.11"
+files = ["app", "ml_service"]
+exclude = ["migrations/", "tests/"]
+
+# Rigueur : on veut du code typé sérieusement
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+show_error_codes = true
+pretty = true
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# -ra : résumé des tests non passés | --strict-markers : markers déclarés obligatoires
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=app",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+]
+markers = [
+    "unit: tests unitaires rapides, sans I/O",
+    "integration: tests avec base de données / services externes",
+    "e2e: tests bout en bout via l'API HTTP",
+    "slow: tests lents (modèles ML, etc.)",
+]
+
+# ===========================================================================
+# COVERAGE — mesure de la couverture de tests
+# ===========================================================================
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/wsgi.py", "*/migrations/*", "*/tests/*"]
+branch = true
+
+[tool.coverage.report]
+# La CI échoue si la couverture passe sous ce seuil
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+# ===========================================================================
+# BANDIT — analyse de sécurité statique
+# ===========================================================================
+[tool.bandit]
+exclude_dirs = ["tests", "migrations", ".venv"]
+# B101 = usage d'assert (acceptable hors prod) ; on le filtre dans les tests
+skips = ["B101"]
