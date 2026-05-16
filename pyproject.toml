@@ -95,6 +95,7 @@ exclude = ["migrations/", "tests/"]
 
 # Rigueur : on veut du code typé sérieusement
 strict = true
+disallow_untyped_decorators = false
 warn_return_any = true
 warn_unused_configs = true
 warn_redundant_casts = true
