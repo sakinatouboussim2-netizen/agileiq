@@ -1,12 +1,14 @@
 """Settings pour les tests automatisés.
 
 Valeurs par défaut suffisantes pour faire tourner pytest sans variables
-d'env. Les tests d'intégration peuvent surcharger DATABASE_URL.
+d'env. Les tests d'intégration peuvent surcharger DATABASE_URL via env.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
+
+from pydantic import field_validator
 
 from app.config.base import BaseAppSettings
 
@@ -32,3 +34,14 @@ class TestingSettings(BaseAppSettings):
     # Tokens très courts pour tester l'expiration sans attendre
     JWT_ACCESS_TOKEN_EXPIRES: int = 5
     JWT_REFRESH_TOKEN_EXPIRES: int = 60
+
+    @field_validator("APP_ENV", mode="before")
+    @classmethod
+    def _force_testing(cls, _value: Any) -> str:
+        """Force APP_ENV='testing' quelle que soit la variable d'env.
+
+        Sans ce validator, exécuter pytest dans un conteneur Docker qui a
+        APP_ENV=development (cas du dev) ferait échouer la validation du
+        Literal['testing'].
+        """
+        return "testing"
