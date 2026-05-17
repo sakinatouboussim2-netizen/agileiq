@@ -12,10 +12,10 @@ package `app/config/` multi-environnement en sous-étape 0.5.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
     RATELIMIT_STORAGE_URI: str = "redis://localhost:6379/3"
 
-    CORS_ORIGINS: list[str] = Field(default_factory=list)
+    CORS_ORIGINS: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"
