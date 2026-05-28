@@ -1,13 +1,13 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class TicketType(str, Enum):
+class TicketType(StrEnum):
     EPIC = "epic"
     FEATURE = "feature"
     BUG = "bug"
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     MINOR = "minor"
     MAJOR = "major"
     CRITICAL = "critical"

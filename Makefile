@@ -2,7 +2,7 @@
 # AgileIQ — Makefile
 # Raccourcis pour les commandes courantes. Usage : make <cible>
 # ==========================================================================
-
+DOCKER_USER := $(shell id -u):$(shell id -g)
 .PHONY: help up down restart logs ps shell test test-cov lint format \
         migrate db-shell clean pre-commit
 
@@ -60,3 +60,21 @@ clean:  ## Supprime les caches Python (pas les volumes Docker)
 	find . -type d -name .mypy_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+# ==============================
+# Database / Alembic
+# ==============================
+
+db-migrate:
+	docker compose exec -u $(DOCKER_USER) api flask db migrate -m "$(M)"
+
+db-init:
+	docker compose exec -u $(DOCKER_USER) api flask db init
+db-upgrade:
+	docker compose exec api flask db upgrade
+
+db-downgrade:
+	docker compose exec api flask db downgrade
+
+db-shell:
+	docker compose exec postgres psql -U agileiq -d agileiq

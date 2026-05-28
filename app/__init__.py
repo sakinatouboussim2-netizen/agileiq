@@ -11,6 +11,12 @@ from app.shared.logging import configure_logging
 from app.shared.middleware.request_id import init_request_id_middleware
 
 
+def _import_models() -> None:
+    from app.modules.projects.infrastructure.database.models import project_model
+    from app.modules.tickets.infrastructure.database.models import ticket_model
+    from app.modules.users.infrastructure.database.models import user_model
+
+
 def create_app(settings: Settings | None = None) -> Flask:
     """Construit et configure une instance Flask."""
     settings = settings or get_settings()
@@ -24,6 +30,7 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     # 3. Extensions (db, jwt, cors, limiter...)
     init_extensions(app)
+    _import_models()
 
     # 4. Middlewares applicatifs
     init_request_id_middleware(app)
@@ -43,3 +50,9 @@ def _register_blueprints(app: Flask) -> None:
     from app.health import health_bp
 
     app.register_blueprint(health_bp)
+    from app.modules.auth.presentation.auth_routes import auth_bp
+
+    app.register_blueprint(auth_bp)
+    from app.modules.projects.presentation.project_routes import projects_bp
+
+    app.register_blueprint(projects_bp)
