@@ -95,6 +95,18 @@ services:
 # ---------------------------------------------------------------------------
 # Volumes nommés : persistent entre les redémarrages
 # ---------------------------------------------------------------------------
+  ml-service:
+    build:
+      context: ./ml_service
+      dockerfile: Dockerfile
+    container_name: agileiq-ml
+    ports:
+      - "8001:8001"
+    networks:
+      - agileiq-net
+    restart: unless-stopped
+
+
 volumes:
   pgdata:
     name: agileiq-pgdata
