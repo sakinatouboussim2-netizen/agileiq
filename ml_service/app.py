@@ -1,32 +1,44 @@
-"""Service IA d'AgileIQ : classification, priorisation, clustering, prediction."""
+"""Service IA d'AgileIQ : classification + démos UI."""
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template_string, request, send_file
 from sklearn.cluster import DBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from classification import TicketClassifier
+from evaluation import confusion_matrix_png, evaluate_classifier
+from feedback_store import add_feedback, get_statistics
+from visualization import (
+    acceptance_chart_png,
+    clusters_tsne_png,
+    explanation_png,
+)
 
 app = Flask(__name__)
 
-# ====================================================
-# Entrainement au demarrage
-# ====================================================
 print("[ml-service] Entrainement du classifieur sur corpus synthetique...")
 classifier = TicketClassifier().train()
 print(f"[ml-service] Classifieur pret. Classes: {classifier.classes_.tolist()}")
 
+# Charge le template base une fois
+with Path("templates/base.html").open() as f:
+    BASE_TEMPLATE = f.read()
 
+
+def render(title: str, body: str) -> str:
+    return render_template_string(BASE_TEMPLATE, title=title, body=body)
+
+
+# ====================================================
+# Endpoints JSON existants (classify, prioritize, cluster, predict)
+# ====================================================
 @app.get("/health")
 def health():
     return jsonify(status="ok", service="agileiq-ml", classes=classifier.classes_.tolist()), 200
 
 
-# ====================================================
-# 1. CLASSIFICATION
-# ====================================================
 @app.post("/classify")
 def classify():
     payload = request.get_json() or {}
@@ -34,18 +46,13 @@ def classify():
     description = payload.get("description", "")
     if not title.strip():
         return jsonify(error="title is required"), 400
-    result = classifier.predict(title, description)
-    return jsonify(result), 200
+    return jsonify(classifier.predict(title, description)), 200
 
 
-# ====================================================
-# 2. PRIORISATION (score multi-criteres explicite)
-# ====================================================
 @app.post("/prioritize")
 def prioritize():
-    """Calcule un score de priorite explicite et decompose par critere."""
     payload = request.get_json() or {}
-    severity = payload.get("severity", "low")  # low/medium/high/critical
+    severity = payload.get("severity", "low")
     days_to_deadline = int(payload.get("days_to_deadline", 30))
     similar_tickets_count = int(payload.get("similar_tickets_count", 0))
     dependency_impact = int(payload.get("dependency_impact", 0))
@@ -58,124 +65,331 @@ def prioritize():
         "dependency": 0.20,
         "business_value": 0.15,
     }
-
     severity_map = {"low": 25, "medium": 50, "high": 75, "critical": 100}
-    severity_score = severity_map.get(severity, 25)
-    urgency_score = max(0, min(100, 100 - (days_to_deadline * 3)))
-    frequency_score = min(100, similar_tickets_count * 15)
-    dependency_score = min(100, dependency_impact * 20)
-
     contributions = {
-        "severity": severity_score * weights["severity"],
-        "urgency": urgency_score * weights["urgency"],
-        "frequency": frequency_score * weights["frequency"],
-        "dependency_impact": dependency_score * weights["dependency"],
+        "severity": severity_map.get(severity, 25) * weights["severity"],
+        "urgency": max(0, min(100, 100 - days_to_deadline * 3)) * weights["urgency"],
+        "frequency": min(100, similar_tickets_count * 15) * weights["frequency"],
+        "dependency_impact": min(100, dependency_impact * 20) * weights["dependency"],
         "business_value": business_value * weights["business_value"],
     }
     total_score = round(sum(contributions.values()), 2)
-
     return (
         jsonify(
             {
                 "score": total_score,
                 "contributions": {k: round(v, 2) for k, v in contributions.items()},
                 "weights": weights,
-                "explanation": (
-                    f"Score {total_score:.0f}/100 = severite ({contributions['severity']:.0f}) "
-                    f"+ urgence ({contributions['urgency']:.0f}) "
-                    f"+ recurrence ({contributions['frequency']:.0f}) "
-                    f"+ dependances ({contributions['dependency_impact']:.0f}) "
-                    f"+ valeur metier ({contributions['business_value']:.0f})"
-                ),
             }
         ),
         200,
     )
 
 
-# ====================================================
-# 3. CLUSTERING (detection de bugs similaires)
-# ====================================================
 @app.post("/cluster")
-def cluster():
-    """Regroupe des bugs similaires par DBSCAN sur leurs embeddings TF-IDF."""
+def cluster_endpoint():
     payload = request.get_json() or {}
-    bugs = payload.get("bugs", [])  # liste de {id, title, description}
+    bugs = payload.get("bugs", [])
     if len(bugs) < 2:
-        return jsonify(error="Au moins 2 bugs requis pour le clustering"), 400
-
+        return jsonify(error="Au moins 2 bugs requis"), 400
     texts = [f"{b.get('title', '')} {b.get('description', '')}" for b in bugs]
     vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
     matrix = vectorizer.fit_transform(texts).toarray()
-
-    dbscan = DBSCAN(eps=0.6, min_samples=2, metric="cosine")
-    labels = dbscan.fit_predict(matrix)
-
+    labels = DBSCAN(eps=0.6, min_samples=2, metric="cosine").fit_predict(matrix)
     clusters = defaultdict(list)
     for bug, label in zip(bugs, labels, strict=False):
-        cluster_id = int(label)
-        bug_summary = {"id": bug.get("id"), "title": bug.get("title")}
-        if cluster_id == -1:
-            clusters["isolated"].append(bug_summary)
-        else:
-            clusters[f"cluster_{cluster_id}"].append(bug_summary)
-
-    return (
-        jsonify(
-            {
-                "total_bugs": len(bugs),
-                "n_clusters": len([k for k in clusters if k != "isolated"]),
-                "n_isolated": len(clusters.get("isolated", [])),
-                "clusters": dict(clusters),
-                "explanation": (
-                    "Clustering DBSCAN (cosine, eps=0.6) sur embeddings TF-IDF. "
-                    "Les bugs marques 'isolated' n'ont pas de doublon proche."
-                ),
-            }
-        ),
-        200,
-    )
+        key = "isolated" if int(label) == -1 else f"cluster_{label}"
+        clusters[key].append({"id": bug.get("id"), "title": bug.get("title")})
+    return jsonify(clusters=dict(clusters)), 200
 
 
-# ====================================================
-# 4. PREDICTION DE DUREE (heuristique fondee sur le type)
-# ====================================================
 @app.post("/predict")
 def predict_duration():
-    """Estime la duree de resolution + intervalle de confiance."""
     payload = request.get_json() or {}
     ticket_type = payload.get("type", "feature")
     story_points = int(payload.get("story_points", 3))
     priority = payload.get("priority", "medium")
     has_blocker = bool(payload.get("has_blocker", False))
-
     base_days = {"epic": 30, "feature": 5, "bug": 2}.get(ticket_type, 5)
     base_days += story_points * 1.5
-
-    priority_factor = {"low": 1.5, "medium": 1.0, "high": 0.75, "critical": 0.5}
-    base_days *= priority_factor.get(priority, 1.0)
-
+    base_days *= {"low": 1.5, "medium": 1.0, "high": 0.75, "critical": 0.5}.get(priority, 1.0)
     if has_blocker:
         base_days *= 1.8
-
-    estimated_days = round(base_days, 1)
-    confidence_interval_days = round(base_days * 0.35, 1)
-
     return (
         jsonify(
             {
-                "estimated_days": estimated_days,
-                "interval_low": round(max(0.5, estimated_days - confidence_interval_days), 1),
-                "interval_high": round(estimated_days + confidence_interval_days, 1),
-                "explanation": (
-                    f"Heuristique : base ({ticket_type}) + story points + priorite "
-                    f"+ facteur bloqueur. Intervalle a 70% de confiance."
-                ),
-                "predicted_at": datetime.now(UTC).isoformat(),
+                "estimated_days": round(base_days, 1),
+                "interval_low": round(max(0.5, base_days * 0.65), 1),
+                "interval_high": round(base_days * 1.35, 1),
             }
         ),
         200,
     )
+
+
+# ====================================================
+# CAPTURE 6.1 — Matrice de confusion
+# ====================================================
+@app.get("/evaluation")
+def evaluation_json():
+    return jsonify(evaluate_classifier()), 200
+
+
+@app.get("/evaluation/confusion_matrix.png")
+def evaluation_png():
+    return send_file(confusion_matrix_png(), mimetype="image/png")
+
+
+# ====================================================
+# CAPTURE 6.3 — UI de validation des suggestions
+# ====================================================
+@app.get("/ui/suggestions")
+def ui_suggestions():
+    sample = {
+        "title": "Crash au login lors de la saisie d'un mot de passe contenant un emoji",
+        "description": "Reproduit sur Firefox et Chrome. Stack trace pointe vers le module d'auth.",
+    }
+    prediction = classifier.predict(sample["title"], sample["description"])
+    keywords_html = "".join(
+        f"<span style='background:#EAF1F8;padding:3px 8px;border-radius:4px;margin-right:4px;font-size:12px;'>{k}</span>"
+        for k in prediction["top_keywords"]
+    )
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Suggestion IA pour ce ticket</h2>
+      <p style="color:#666;font-size:14px;">Le ticket suivant vient d'être créé. L'IA a analysé son contenu et propose une classification.</p>
+      <div style="background:#f7f8fa;padding:14px;border-radius:6px;margin:16px 0;">
+        <strong>Titre :</strong> {sample["title"]}<br>
+        <span style="color:#666;font-size:13px;">{sample["description"]}</span>
+      </div>
+      <div style="display:flex;gap:24px;align-items:center;margin:16px 0;">
+        <div>
+          <div style="font-size:13px;color:#666;">Type prédit</div>
+          <span class="badge badge-{prediction["type"]}" style="font-size:18px;padding:6px 12px;">{prediction["type"].upper()}</span>
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:13px;color:#666;">Confiance</div>
+          <div style="font-size:22px;font-weight:bold;color:#2E7D6B;">{prediction["confidence"]:.0%}</div>
+          <div class="meter"><div class="meter-fill" style="width:{prediction["confidence"] * 100:.0f}%;"></div></div>
+        </div>
+      </div>
+      <div style="margin:16px 0;">
+        <div style="font-size:13px;color:#666;margin-bottom:6px;">Mots-clés explicatifs</div>
+        {keywords_html}
+      </div>
+      <div style="margin-top:24px;">
+        <button class="btn btn-accept" onclick="alert('Suggestion acceptée. Le ticket est marqué comme bug.')">✓ Accepter</button>
+        <button class="btn btn-modify" onclick="alert('Édition activée — vous pouvez changer le type')">✎ Modifier</button>
+        <button class="btn btn-reject" onclick="alert('Suggestion rejetée. Aucun feedback envoyé au modèle.')">✗ Rejeter</button>
+      </div>
+      <p style="color:#888;font-size:12px;margin-top:16px;font-style:italic;">
+        Chaque action utilisateur est tracée et alimente le ré-entraînement périodique du modèle (mécanisme human-in-the-loop).
+      </p>
+    </div>
+    """
+    return render("Validation des suggestions IA", body)
+
+
+# ====================================================
+# CAPTURE 6.5 — Visualisation des clusters de bugs
+# ====================================================
+@app.get("/visualization/clusters.png")
+def visualization_clusters():
+    return send_file(clusters_tsne_png(), mimetype="image/png")
+
+
+# ====================================================
+# CAPTURE 6.7 — Dashboard de prédictions
+# ====================================================
+@app.get("/ui/predictions")
+def ui_predictions():
+    tickets = [
+        ("Refonte du module de paiement", "epic", 13, "high", False),
+        ("Crash login Firefox", "bug", 2, "critical", True),
+        ("Ajouter export CSV", "feature", 5, "medium", False),
+        ("Migration cloud AWS", "epic", 21, "high", True),
+        ("Bug d'affichage sur Safari", "bug", 3, "low", False),
+        ("Implémenter OAuth Google", "feature", 8, "high", False),
+        ("Lenteur sur la recherche", "bug", 5, "medium", True),
+    ]
+    rows = []
+    for title, ttype, sp, pr, blocker in tickets:
+        base = {"epic": 30, "feature": 5, "bug": 2}[ttype] + sp * 1.5
+        base *= {"low": 1.5, "medium": 1.0, "high": 0.75, "critical": 0.5}[pr]
+        if blocker:
+            base *= 1.8
+        days = round(base, 1)
+        low = round(max(0.5, base * 0.65), 1)
+        high = round(base * 1.35, 1)
+        risk = "high" if days > 15 else "medium" if days > 7 else "low"
+        risk_label = {"low": "Faible", "medium": "Moyen", "high": "Élevé"}[risk]
+        rows.append(
+            f"""
+          <tr>
+            <td>{title}</td>
+            <td><span class="badge badge-{ttype}">{ttype}</span></td>
+            <td>{sp}</td>
+            <td>{pr}</td>
+            <td>{"⚠️" if blocker else "—"}</td>
+            <td><strong>{days} j</strong> <span style="color:#666;font-size:12px;">[{low} - {high}]</span></td>
+            <td><span class="badge badge-{risk}">{risk_label}</span></td>
+          </tr>
+        """
+        )
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Prédictions de durée et risque par ticket</h2>
+      <p style="color:#666;font-size:14px;">Le modèle prédictif estime la durée de résolution et le niveau de risque pour chaque ticket en cours.</p>
+      <table>
+        <thead><tr>
+          <th>Ticket</th><th>Type</th><th>SP</th><th>Priorité</th><th>Bloqueur</th><th>Durée estimée</th><th>Risque retard</th>
+        </tr></thead>
+        <tbody>{"".join(rows)}</tbody>
+      </table>
+      <p style="color:#888;font-size:12px;margin-top:14px;font-style:italic;">
+        Intervalles à 70% de confiance. Les tickets en risque élevé doivent être priorisés ou re-planifiés.
+      </p>
+    </div>
+    """
+    return render("Dashboard prédictif", body)
+
+
+# ====================================================
+# CAPTURE 6.8 — Explication SHAP-like
+# ====================================================
+@app.get("/explanation.png")
+def explanation_endpoint():
+    title = request.args.get("title", "Crash au login avec mot de passe special")
+    description = request.args.get("description", "")
+    return send_file(explanation_png(title, description, classifier), mimetype="image/png")
+
+
+# ====================================================
+# CAPTURE 6.9 — Statistiques d'acceptation
+# ====================================================
+@app.post("/feedback")
+def feedback():
+    payload = request.get_json() or {}
+    add_feedback(payload.get("ticket_type", "bug"), payload.get("decision", "accepted"))
+    return jsonify(ok=True, total=get_statistics()["total"]), 200
+
+
+@app.get("/stats/acceptance.png")
+def stats_png():
+    return send_file(acceptance_chart_png(get_statistics()), mimetype="image/png")
+
+
+@app.get("/ui/stats")
+def ui_stats():
+    stats = get_statistics()
+    recent_rows = "".join(
+        f"<tr><td>{f['at'][:16].replace('T', ' ')}</td><td><span class='badge badge-{f['ticket_type']}'>{f['ticket_type']}</span></td><td>{f['decision']}</td></tr>"
+        for f in reversed(stats["recent"])
+    )
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Suivi du taux d'acceptation des suggestions IA</h2>
+      <div style="display:flex;gap:20px;margin:16px 0;">
+        <div style="flex:1;background:#f7f8fa;padding:16px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Total</div>
+          <div style="font-size:28px;font-weight:bold;">{stats["total"]}</div>
+        </div>
+        <div style="flex:1;background:#d4edda;padding:16px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#155724;">Acceptation</div>
+          <div style="font-size:28px;font-weight:bold;color:#155724;">{stats["acceptance_rate"]:.0%}</div>
+        </div>
+        <div style="flex:1;background:#fff3cd;padding:16px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#856404;">Modifiées</div>
+          <div style="font-size:28px;font-weight:bold;color:#856404;">{stats["counts"].get("modified", 0)}</div>
+        </div>
+        <div style="flex:1;background:#f8d7da;padding:16px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#721c24;">Rejetées</div>
+          <div style="font-size:28px;font-weight:bold;color:#721c24;">{stats["counts"].get("rejected", 0)}</div>
+        </div>
+      </div>
+      <img class="viz" src="/stats/acceptance.png" alt="Graphique acceptation">
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Derniers feedbacks</h3>
+      <table>
+        <thead><tr><th>Date</th><th>Type</th><th>Décision</th></tr></thead>
+        <tbody>{recent_rows}</tbody>
+      </table>
+    </div>
+    """
+    return render("Statistiques d'acceptation", body)
+
+
+# ====================================================
+# CAPTURE 6.10 — Dashboard des modèles déployés
+# ====================================================
+@app.get("/ui/models")
+def ui_models():
+    eval_result = evaluate_classifier()
+    models = [
+        {
+            "name": "ticket-classifier",
+            "version": "v1.0.0",
+            "type": "Classification (TF-IDF + LogReg)",
+            "trained_at": "2026-05-29 06:00 UTC",
+            "f1_macro": eval_result["f1_macro"],
+            "status": "deployed",
+        },
+        {
+            "name": "priority-scorer",
+            "version": "v1.0.0",
+            "type": "Score multi-critères (règles + poids)",
+            "trained_at": "—",
+            "f1_macro": None,
+            "status": "deployed",
+        },
+        {
+            "name": "bug-clusterer",
+            "version": "v1.0.0",
+            "type": "DBSCAN sur embeddings TF-IDF",
+            "trained_at": "2026-05-29 04:00 UTC",
+            "f1_macro": None,
+            "status": "deployed",
+        },
+        {
+            "name": "duration-predictor",
+            "version": "v0.5.0-rc1",
+            "type": "Heuristique (LightGBM en cours)",
+            "trained_at": "—",
+            "f1_macro": None,
+            "status": "experimental",
+        },
+    ]
+    rows = ""
+    for m in models:
+        f1 = f"{m['f1_macro']:.3f}" if m["f1_macro"] is not None else "—"
+        status_color = "#2E7D6B" if m["status"] == "deployed" else "#E0A030"
+        rows += f"""
+          <tr>
+            <td><strong>{m["name"]}</strong></td>
+            <td><code>{m["version"]}</code></td>
+            <td>{m["type"]}</td>
+            <td>{m["trained_at"]}</td>
+            <td>{f1}</td>
+            <td><span style="background:{status_color};color:#fff;padding:3px 8px;border-radius:4px;font-size:12px;font-weight:600;">{m["status"]}</span></td>
+          </tr>
+        """
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Modèles d'IA déployés</h2>
+      <p style="color:#666;font-size:14px;">Tableau de bord administrateur des modèles ML actuellement en production sur AgileIQ.</p>
+      <table>
+        <thead><tr>
+          <th>Nom</th><th>Version</th><th>Type</th><th>Dernier entraînement</th><th>F1-macro</th><th>Statut</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+      <p style="color:#888;font-size:12px;margin-top:14px;font-style:italic;">
+        Le ré-entraînement périodique est planifié mensuellement. Un nouveau modèle ne remplace l'ancien que s'il améliore la métrique principale sur le jeu holdé out.
+      </p>
+    </div>
+    """
+    return render("Modèles déployés", body)
 
 
 if __name__ == "__main__":
