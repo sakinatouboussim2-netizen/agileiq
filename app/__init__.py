@@ -27,7 +27,21 @@ def create_app(settings: Settings | None = None) -> Flask:
     # 2. Application Flask
     app = Flask(__name__)
     app.config.from_mapping(settings.flask_config())
-
+    # Configuration Swagger / OpenAPI
+    app.config["API_TITLE"] = "AgileIQ API"
+    app.config["API_VERSION"] = "v1"
+    app.config["OPENAPI_VERSION"] = "3.0.3"
+    app.config["OPENAPI_URL_PREFIX"] = "/"
+    app.config["OPENAPI_SWAGGER_UI_PATH"] = "/docs"
+    app.config["OPENAPI_SWAGGER_UI_URL"] = "https://cdn.jsdelivr.net/npm/swagger-ui-dist/"
+    app.config["API_SPEC_OPTIONS"] = {
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+            }
+        },
+        "security": [{"bearerAuth": []}],
+    }
     # 3. Extensions (db, jwt, cors, limiter...)
     init_extensions(app)
     _import_models()
@@ -37,6 +51,16 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     # 5. Blueprints
     _register_blueprints(app)
+    # API smorest avec génération OpenAPI automatique
+    from flask_smorest import Api
+
+    api = Api(app)
+
+    from app.modules.projects.presentation.project_routes import projects_bp
+    from app.modules.tickets.presentation.ticket_routes import tickets_bp
+
+    api.register_blueprint(projects_bp)
+    api.register_blueprint(tickets_bp)
 
     # 6. Log de démarrage via structlog (pas plus app.logger.info)
     logger = structlog.get_logger("agileiq")
@@ -53,6 +77,3 @@ def _register_blueprints(app: Flask) -> None:
     from app.modules.auth.presentation.auth_routes import auth_bp
 
     app.register_blueprint(auth_bp)
-    from app.modules.projects.presentation.project_routes import projects_bp
-
-    app.register_blueprint(projects_bp)
