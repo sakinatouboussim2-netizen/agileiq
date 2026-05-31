@@ -1,8 +1,8 @@
 import { Link, Route, Routes } from "react-router-dom";
 import "./App.css";
 
-const API_URL = "http://localhost:8000";
-const ML_URL = "http://localhost:8001";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const ML_URL = import.meta.env.VITE_ML_URL || "http://localhost:8001";
 
 function Layout({ children }) {
   return (
