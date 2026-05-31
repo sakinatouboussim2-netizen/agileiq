@@ -1,8 +1,4 @@
-"""Fixtures pytest partagées.
-
-Une fixture `app` construit une Flask app avec TestingSettings.
-Une fixture `client` expose le client HTTP de test (pas de réseau réel).
-"""
+"""Fixtures pytest partagées entre tous les niveaux de tests."""
 
 from __future__ import annotations
 

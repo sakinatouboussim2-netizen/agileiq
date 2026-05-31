@@ -152,7 +152,7 @@ def ui_suggestions():
     prediction = classifier.predict(sample["title"], sample["description"])
     keywords_html = "".join(
         f"<span style='background:#EAF1F8;padding:3px 8px;border-radius:4px;margin-right:4px;font-size:12px;'>{k}</span>"
-        for k in prediction["top_keywords"]
+        for k in prediction.get("preprocessed_text", "").split()[:5]
     )
     body = f"""
     <div class="card">
@@ -390,6 +390,204 @@ def ui_models():
     </div>
     """
     return render("Modèles déployés", body)
+
+
+# ====================================================
+# Endpoint démonstration spaCy : préprocessing détaillé
+# ====================================================
+from nlp_preprocessing import analyze as nlp_analyze
+
+
+@app.post("/preprocess")
+def preprocess_endpoint():
+    """Démontre la chaîne spaCy : langue, lemmes, entités nommées."""
+    payload = request.get_json() or {}
+    text = payload.get("text", "")
+    if not text.strip():
+        return jsonify(error="text is required"), 400
+    return (
+        jsonify(
+            {
+                "pipeline": "spaCy (fr_core_news_md / en_core_web_sm)",
+                **nlp_analyze(text),
+            }
+        ),
+        200,
+    )
+
+
+@app.get("/ui/nlp")
+def ui_nlp():
+    """Page de démonstration du pipeline NLP."""
+    sample = (
+        "Crash au login lors de la saisie d'un mot de passe special dans Firefox 132 sur Windows 11"
+    )
+    result = nlp_analyze(sample)
+    entities_html = (
+        "".join(
+            f"<span style='background:#EAF1F8;padding:3px 8px;border-radius:4px;margin-right:4px;font-size:13px;'>"
+            f"<strong>{e['text']}</strong> <span style='color:#888;'>({e['label']})</span></span>"
+            for e in result["entities"]
+        )
+        or "<em style='color:#888;'>Aucune entité détectée</em>"
+    )
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Pipeline NLP : spaCy + sentence-transformers</h2>
+      <p style="color:#666;font-size:14px;">Démonstration de la chaîne complète de préprocessing utilisée par le service IA.</p>
+      <div style="background:#f7f8fa;padding:14px;border-radius:6px;margin:16px 0;">
+        <strong>Texte d'entrée :</strong><br>
+        <span style="font-style:italic;color:#444;">{sample}</span>
+      </div>
+      <table style="margin-top:16px;">
+        <tr><th style="width:30%;">Étape</th><th>Résultat</th></tr>
+        <tr><td><strong>Langue détectée</strong></td><td><span class="badge badge-feature">{result['language']}</span></td></tr>
+        <tr><td><strong>Taille originale</strong></td><td>{result['original_length']} caractères</td></tr>
+        <tr><td><strong>Texte lemmatisé</strong></td><td><code>{result['cleaned_text']}</code></td></tr>
+        <tr><td><strong>Nombre de tokens conservés</strong></td><td>{result['token_count']}</td></tr>
+        <tr><td><strong>Entités nommées détectées</strong></td><td>{entities_html}</td></tr>
+      </table>
+      <p style="color:#888;font-size:12px;margin-top:16px;font-style:italic;">
+        Ce texte lemmatisé est ensuite encodé par sentence-transformers
+        (paraphrase-multilingual-MiniLM-L12-v2) en vecteur 384d, puis classifié par régression logistique.
+      </p>
+    </div>
+    """
+    return render("Pipeline NLP", body)
+
+
+# Fix: les fichiers manquants de setup_final
+from bug_recommendation import BugRecommender
+from gitlab_integration import import_and_classify
+from performance_metrics import compute_metrics
+from severity_predictor import SeverityPredictor
+
+print("[ml-service] Chargement bug recommender + severity predictor...")
+bug_recommender = BugRecommender()
+severity_predictor = SeverityPredictor()
+print("[ml-service] Pret.")
+
+
+@app.post("/recommend")
+def recommend_solutions():
+    payload = request.get_json() or {}
+    title = payload.get("title", "")
+    if not title.strip():
+        return jsonify(error="title is required"), 400
+    return (
+        jsonify(
+            {
+                "input": {"title": title, "description": payload.get("description", "")},
+                "recommendations": bug_recommender.recommend(
+                    title, payload.get("description", ""), top_k=3
+                ),
+                "method": "Embedding sentence-transformers + similarite cosinus",
+            }
+        ),
+        200,
+    )
+
+
+@app.post("/predict-severity")
+def predict_severity_endpoint():
+    payload = request.get_json() or {}
+    title = payload.get("title", "")
+    if not title.strip():
+        return jsonify(error="title is required"), 400
+    return jsonify(severity_predictor.predict(title, payload.get("description", ""))), 200
+
+
+@app.post("/integrations/gitlab/import")
+def gitlab_import():
+    payload = request.get_json() or {}
+    return (
+        jsonify(
+            import_and_classify(
+                classifier,
+                gitlab_url=payload.get("gitlab_url", ""),
+                project_id=payload.get("project_id", ""),
+                token=payload.get("token", ""),
+            )
+        ),
+        200,
+    )
+
+
+@app.get("/stats/performance")
+def stats_performance():
+    return jsonify(compute_metrics()), 200
+
+
+@app.get("/ui/integrations")
+def ui_integrations():
+    result = import_and_classify(classifier)
+    rows = ""
+    for issue in result["issues"]:
+        rows += f"""<tr>
+          <td><code>#{issue['iid']}</code></td>
+          <td>{issue['title']}</td>
+          <td><span class="badge badge-feature">{issue['language_detected']}</span></td>
+          <td><span class="badge badge-{issue['ai_classification']}">{issue['ai_classification']}</span></td>
+          <td><strong>{issue['ai_confidence']:.0%}</strong></td>
+        </tr>"""
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Integration GitLab — Import et classification</h2>
+      <p style="color:#666;font-size:14px;">Source : <strong>{result['source']}</strong> · {result['total_imported']} issues.</p>
+      <div style="display:flex;gap:14px;margin:16px 0;">
+        <div style="flex:1;background:#fff7e6;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Epics</div>
+          <div style="font-size:24px;font-weight:bold;color:#5B8DEF;">{result['classification_summary'].get('epic', 0)}</div>
+        </div>
+        <div style="flex:1;background:#e8f4f0;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Features</div>
+          <div style="font-size:24px;font-weight:bold;color:#2E7D6B;">{result['classification_summary'].get('feature', 0)}</div>
+        </div>
+        <div style="flex:1;background:#fde4ea;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Bugs</div>
+          <div style="font-size:24px;font-weight:bold;color:#C2455E;">{result['classification_summary'].get('bug', 0)}</div>
+        </div>
+      </div>
+      <table><thead><tr><th>Issue</th><th>Titre</th><th>Langue</th><th>Type IA</th><th>Confiance</th></tr></thead>
+      <tbody>{rows}</tbody></table>
+    </div>"""
+    return render("Integration GitLab", body)
+
+
+@app.get("/ui/performance")
+def ui_performance():
+    m = compute_metrics()
+    body = f"""
+    <div class="card">
+      <h2 style="margin-top:0">Performance et gain de temps</h2>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0;">
+        <div style="background:#f7f8fa;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Tickets traites</div>
+          <div style="font-size:24px;font-weight:bold;">{m['tickets_processed']}</div>
+        </div>
+        <div style="background:#fde4ea;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Bugs analyses</div>
+          <div style="font-size:24px;font-weight:bold;color:#C2455E;">{m['bugs_processed']}</div>
+        </div>
+        <div style="background:#e8f4f0;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Heures economisees</div>
+          <div style="font-size:24px;font-weight:bold;color:#2E7D6B;">{m['time_savings']['total_hours_saved']} h</div>
+        </div>
+        <div style="background:#eaf1f8;padding:14px;border-radius:6px;text-align:center;">
+          <div style="font-size:12px;color:#666;">Taux acceptation IA</div>
+          <div style="font-size:24px;font-weight:bold;color:#1F3355;">{m['acceptance_rate']:.0%}</div>
+        </div>
+      </div>
+      <h3>Decomposition du gain de temps</h3>
+      <table>
+        <tr><th>Tache</th><th>Temps economise</th></tr>
+        <tr><td>Classification automatique</td><td>{m['time_savings']['classification_seconds_saved']//60} min</td></tr>
+        <tr><td>Priorisation explicable</td><td>{m['time_savings']['priority_seconds_saved']//60} min</td></tr>
+        <tr><td>Recherche bugs similaires</td><td>{m['time_savings']['bug_search_seconds_saved']//60} min</td></tr>
+        <tr style="font-weight:bold;background:#f0f3f7;"><td>Total</td><td>{m['time_savings']['total_hours_saved']} h ({m['time_savings']['total_days_saved (8h/jour)']} jours)</td></tr>
+      </table>
+    </div>"""
+    return render("Performance", body)
 
 
 if __name__ == "__main__":

@@ -1,79 +1,78 @@
-"""Classifieur de tickets : TF-IDF + regression logistique multinomiale."""
+"""Classifieur AgileIQ : spaCy → sentence-transformers → LogReg."""
 
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sentence_transformers import SentenceTransformer
 from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
 
+from nlp_preprocessing import preprocess
 from synthetic_data import get_training_data
+
+# Chargement du modèle d'embedding multilingue au démarrage
+print("[ml-service] Chargement de sentence-transformers (paraphrase-multilingual-MiniLM-L12-v2)...")
+EMBEDDING_MODEL = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+EMBEDDING_DIM = EMBEDDING_MODEL.get_sentence_embedding_dimension()
+print(f"[ml-service] sentence-transformers prêt (dimension = {EMBEDDING_DIM}).")
 
 
 class TicketClassifier:
-    """Pipeline d'apprentissage et d'inference pour la classification de tickets."""
+    """Pipeline : spaCy lemmatisation → embeddings 384d → régression logistique."""
 
     def __init__(self) -> None:
-        self.pipeline = Pipeline(
-            [
-                (
-                    "tfidf",
-                    TfidfVectorizer(
-                        ngram_range=(1, 2),
-                        min_df=1,
-                        sublinear_tf=True,
-                        lowercase=True,
-                    ),
-                ),
-                (
-                    "clf",
-                    LogisticRegression(
-                        C=1.0,
-                        max_iter=1000,
-                        multi_class="multinomial",
-                        solver="lbfgs",
-                    ),
-                ),
-            ]
+        self.classifier = LogisticRegression(
+            C=1.0,
+            max_iter=1000,
+            solver="lbfgs",
+            multi_class="multinomial",
         )
         self.classes_ = None
+        self.embedder = EMBEDDING_MODEL
+
+    def _embed_batch(self, texts: list[str]) -> np.ndarray:
+        """Préprocessing spaCy puis embedding par batch."""
+        cleaned = [preprocess(t)[0] for t in texts]
+        return self.embedder.encode(
+            cleaned,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            batch_size=16,
+        )
 
     def train(self):
-        """Entrainement sur corpus synthetique au demarrage du service."""
+        """Entrainement sur le corpus synthétique."""
         texts, labels = get_training_data()
-        self.pipeline.fit(texts, labels)
-        self.classes_ = self.pipeline.classes_
+        print(f"[ml-service] Entrainement sur {len(texts)} exemples...")
+        embeddings = self._embed_batch(texts)
+        self.classifier.fit(embeddings, labels)
+        self.classes_ = self.classifier.classes_
+        print(f"[ml-service] Classifieur entraîné. Classes : {self.classes_.tolist()}")
         return self
 
     def predict(self, title: str, description: str = "") -> dict:
-        """Predit le type d'un ticket et retourne la confiance + explication."""
+        """Prédit le type d'un ticket et retourne confiance, langue, explication."""
         text = f"{title} {description}".strip()
-        probabilities = self.pipeline.predict_proba([text])[0]
-        predicted_idx = int(np.argmax(probabilities))
-        predicted_class = str(self.classes_[predicted_idx])
-        confidence = float(probabilities[predicted_idx])
-
-        # Top mots-cles ayant pese dans la decision
-        vectorizer = self.pipeline.named_steps["tfidf"]
-        classifier = self.pipeline.named_steps["clf"]
-        feature_names = vectorizer.get_feature_names_out()
-        token_indices = vectorizer.transform([text]).nonzero()[1]
-        coefficients = classifier.coef_[predicted_idx]
-        scored = sorted(
-            ((feature_names[i], float(coefficients[i])) for i in token_indices),
-            key=lambda x: abs(x[1]),
-            reverse=True,
+        cleaned, language = preprocess(text)
+        embedding = self.embedder.encode(
+            [cleaned],
+            show_progress_bar=False,
+            convert_to_numpy=True,
         )
-        top_keywords = [w for w, _ in scored[:5]]
+        probabilities = self.classifier.predict_proba(embedding)[0]
+        pred_idx = int(np.argmax(probabilities))
+        predicted_class = str(self.classes_[pred_idx])
+        confidence = float(probabilities[pred_idx])
 
         return {
             "type": predicted_class,
             "confidence": round(confidence, 4),
             "probabilities": {
-                str(c): round(float(p), 4)
-                for c, p in zip(self.classes_, probabilities, strict=False)
+                str(c): round(float(p), 4) for c, p in zip(self.classes_, probabilities)
             },
-            "top_keywords": top_keywords,
+            "language_detected": language,
+            "preprocessed_text": cleaned,
+            "embedding_model": "paraphrase-multilingual-MiniLM-L12-v2",
+            "embedding_dim": int(embedding.shape[1]),
             "explanation": (
-                f"Classification automatique par TF-IDF + regression logistique "
-                f"(confiance {confidence:.0%})."
+                f"Classification par embeddings sentence-transformers ({EMBEDDING_DIM}d) "
+                f"+ régression logistique (confiance {confidence:.0%}, langue {language})."
             ),
         }
