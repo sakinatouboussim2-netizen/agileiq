@@ -31,10 +31,11 @@ shell:  ## Shell bash dans le conteneur API
 
 # --- Tests ----------------------------------------------------------------
 test:  ## Lance la suite de tests (pytest)
-	docker compose exec api pytest
+	test:
+	docker compose exec api pytest --no-cov
 
-test-cov:  ## Lance les tests avec rapport de couverture
-	docker compose exec api pytest --cov=app --cov-report=term-missing --cov-report=html
+test-cov:
+	docker compose exec -e COVERAGE_FILE=/tmp/.coverage api pytest --cov=app --cov-report=term-missing
 
 # --- Qualité de code -----------------------------------------------------
 lint:  ## Vérifie ruff + black + mypy

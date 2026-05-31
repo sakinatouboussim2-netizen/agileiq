@@ -47,12 +47,15 @@ def create_app(settings: Settings | None = None) -> Flask:
 
 def _register_blueprints(app: Flask) -> None:
     """Enregistre tous les blueprints applicatifs."""
+
+    from app.extensions import api
     from app.health import health_bp
+    from app.modules.auth.presentation.auth_routes import auth_bp
+    from app.modules.projects.presentation.project_routes import projects_bp
+    from app.modules.tickets.presentation.ticket_routes import tickets_bp
 
     app.register_blueprint(health_bp)
-    from app.modules.auth.presentation.auth_routes import auth_bp
-
     app.register_blueprint(auth_bp)
-    from app.modules.projects.presentation.project_routes import projects_bp
 
-    app.register_blueprint(projects_bp)
+    api.register_blueprint(projects_bp)
+    api.register_blueprint(tickets_bp)
